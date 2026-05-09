@@ -16,4 +16,5 @@ public class Permission {
     private List<Permission> children;
     private Integer sort;
     private LocalDateTime createTime;
+
 }
