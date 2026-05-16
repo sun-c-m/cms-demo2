@@ -4,7 +4,11 @@ import cn.edu.guet.demo2.entity.Permission;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Data
 public class UserLoginVO {
@@ -16,4 +20,22 @@ public class UserLoginVO {
     private List<Permission> permissionList;
     // 树形菜单列表（仅包含目录和菜单，用于前端侧边栏展示）
     private List<Permission> menuTree;
+
+    private Set<String> permissions;
+
+    public boolean hasPermission(String permission) {
+        // 懒加载：第一次用到时，把 List 转为 Set 提高后续查询效率
+//            permissions = permissionList.stream()
+//                    .map(Permission::getCode)
+//                    .filter(Objects::nonNull)
+//                    .collect(Collectors.toSet());
+        permissions = new HashSet<>();
+        for (int i = 0; i < permissionList.size(); i++) {
+            String code = permissionList.get(i).getCode();
+            if (code != null) {
+                permissions.add(code);
+            }
+        }
+        return permissions != null && permissions.contains(permission);
+    }
 }

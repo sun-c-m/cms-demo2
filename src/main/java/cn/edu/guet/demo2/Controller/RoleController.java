@@ -1,4 +1,5 @@
 package cn.edu.guet.demo2.Controller;
+import cn.edu.guet.demo2.annotation.RequiresPermission;
 import cn.edu.guet.demo2.entity.Role;
 import cn.edu.guet.demo2.service.RoleService;
 import cn.edu.guet.demo2.util.PageRequest;
@@ -18,6 +19,11 @@ public class RoleController {
     public Result<IPage<Role>> getRoleInfoPage(@RequestBody PageRequest pageRequest){
         log.info("前端的分页残数：{}，{}",pageRequest.getCurrentPage(),pageRequest.getPageSize());
         return Result.success(roleService.getRoleInfoPage(pageRequest));
+    }
+    @RequiresPermission("role:delete")
+    @DeleteMapping("/{id}")
+    public Result deleteRole(@PathVariable Integer id) {
+        return roleService.deleteRole(id);
     }
 
 }

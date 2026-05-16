@@ -6,4 +6,5 @@ import org.springframework.web.bind.annotation.RequestBody;
 
 public interface LoginService {
     UserLoginVO login(@RequestBody LoginDto loginDto);
+
 }

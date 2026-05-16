@@ -5,36 +5,104 @@ import cn.edu.guet.demo2.entity.Permission;
 import cn.edu.guet.demo2.mapper.LoginMapper;
 import cn.edu.guet.demo2.service.LoginService;
 import cn.edu.guet.demo2.vo.UserLoginVO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-public class LoginServiceImpl implements LoginService {
+public  class LoginServiceImpl implements LoginService {
+
     @Autowired
     private LoginMapper loginMapper;
 
-    @Override
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
+    @Value("${token.ttl.hours}")
+    private long tokenTtlHours;
+
+    /**
+     * 登录核心逻辑
+     */
+    @Override
     public UserLoginVO login(LoginDto loginDto) {
+        // 1. 基础登录验证
         UserLoginVO loginVO = loginMapper.login(loginDto);
-        log.info("loginVO的信息：{}",loginVO);
         if (loginVO == null) {
             throw new RuntimeException("用户名或密码错误");
         }
+
         // 2. 优化：只在这里构建一次菜单树
         if (loginVO.getPermissionList() != null) {
             List<Permission> menuTree = buildMenuTree(loginVO.getPermissionList());
             loginVO.setMenuTree(menuTree);
         }
+
+        // 3. 执行颁发 Token 逻辑（包含单点登录逻辑）
+        issueToken(loginVO);
+
         return loginVO;
     }
+
+    /**
+     * 颁发 Token 并处理 Redis 存储（方案2：单点登录）
+     */
+    private void issueToken(UserLoginVO loginVO) {
+        Integer userId = loginVO.getId();
+        String userUidKey = "login:uid:" + userId;
+
+        // === 1. 单点登录逻辑：检查并踢出旧 Token ===
+        String oldToken = stringRedisTemplate.opsForValue().get(userUidKey);
+        if (oldToken != null) {
+            log.info("用户 {} 在其他地方登录，作废旧 Token: {}", userId, oldToken);
+            stringRedisTemplate.delete("login:token:" + oldToken);
+            // 同时删除关联的权限缓存
+            stringRedisTemplate.delete("login:permissions:" + oldToken);
+        }
+
+        // === 2. 生成新 Token ===
+        String newToken = UUID.randomUUID().toString().replace("-", "");
+        loginVO.setToken(newToken);
+        loginVO.setTokenExpireAt(LocalDateTime.now().plusHours(tokenTtlHours));
+
+        // === 3. 存储到 Redis ===
+        String tokenKey = "login:token:" + newToken;
+        try {
+            // 存储 VO 详情
+            String jsonVO = objectMapper.writeValueAsString(loginVO);
+            stringRedisTemplate.opsForValue().set(tokenKey, jsonVO, tokenTtlHours, TimeUnit.HOURS);
+
+            // 存储 UID -> Token 映射，用于下次登录时踢人
+            stringRedisTemplate.opsForValue().set(userUidKey, newToken, tokenTtlHours, TimeUnit.HOURS);
+
+            // 存储权限码映射（优化：Key 使用 Token 绑定，确保随 Token 一起失效）
+            if (loginVO.getPermissionList() != null) {
+                String permKey = "login:permissions:" + newToken;
+                String perms = loginVO.getPermissionList().stream()
+                        .map(Permission::getCode)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.joining(","));
+                stringRedisTemplate.opsForValue().set(permKey, perms, tokenTtlHours, TimeUnit.HOURS);
+            }
+
+        } catch (JsonProcessingException e) {
+            log.error("LoginVO 序列化失败", e);
+            throw new RuntimeException("登录系统异常");
+        }
+    }
+
     /**
      * 构建菜单树（过滤按钮，进行排序）
      */
@@ -55,6 +123,7 @@ public class LoginServiceImpl implements LoginService {
         tree.sort(Comparator.comparing(Permission::getSort, Comparator.nullsLast(Integer::compareTo)));
         return tree;
     }
+
     /**
      * 递归寻找子节点
      */
@@ -70,3 +139,4 @@ public class LoginServiceImpl implements LoginService {
         return parent;
     }
 }
+
